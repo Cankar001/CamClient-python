@@ -1,3 +1,4 @@
+import math
 import socket
 import time
 import cv2
@@ -10,6 +11,8 @@ import numpy as np
 
 import pickle
 import struct
+
+import Logger
 
 usleep = lambda x: time.sleep(x/1000000.0)
 
@@ -87,6 +90,8 @@ if __name__ == '__main__':
             if not ret:
                 break
 
+            start_time = time.time()
+
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb = imutils.resize(frame, width=250)
             r = frame.shape[1] / float(rgb.shape[1])
@@ -102,6 +107,7 @@ if __name__ == '__main__':
             pick = non_max_suppression(rects, probs=None, overlapThresh=0.65)
 
             name = 'UNKNOWN'
+            name_encodings = []
             for encoding in faceEncodings:
                 matches = face_recognition.compare_faces(knownFaceEncodings, encoding)
                 if True in matches:
@@ -121,9 +127,14 @@ if __name__ == '__main__':
                     # of votes (note: in the event of an unlikely tie Python
                     # will select first entry in the dictionary)
                     name = max(counts, key=counts.get)
-                    break
+                    name_encodings.append(name)
 
-            names.append(name)
+            # overwrite the current names list, because we are only interested in the names of the current frame
+            names = name_encodings
+
+            print(f'Face locations: {faceLocations}')
+            print(f'Names: {names}')
+            print(f'Picks: {pick}')
 
             # loop over the recognized faces
             for ((top, right, bottom, left), name) in zip(faceLocations, names):
@@ -141,6 +152,10 @@ if __name__ == '__main__':
             # draw the final bounding boxes
             for (xA, yA, xB, yB) in pick:
                 cv2.rectangle(frame, (xA, yA), (xB, yB), (0, 255, 0), 2)
+
+            end_time = time.time()
+            current_fps = math.ceil(1 / np.round(end_time - start_time, 3))
+            Logger.success(f'Current FPS: {current_fps}')
 
             cv2.imshow('Frame', frame)
 
