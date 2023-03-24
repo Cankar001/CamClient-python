@@ -1,4 +1,7 @@
+import math
 import socket
+import threading
+from threading import Lock
 import time
 import cv2
 
@@ -11,6 +14,8 @@ import numpy as np
 import pickle
 import struct
 
+import Logger
+
 usleep = lambda x: time.sleep(x/1000000.0)
 
 PORT = 45457
@@ -20,6 +25,10 @@ ADDR = (IP, PORT)
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect(ADDR)
 
+threads = []
+names = []
+pick = []
+faceLocations = []
 
 def send(msg):
     message = msg.encode('utf-8')
@@ -45,12 +54,59 @@ def join(frame_width, frame_height):
 def leave(motionDetected):
     pass
 
+def worker(threadLock, rgb, knownFaceEncodings, knownPersons):
+    global faceLocations
+    global names
+    global pick
+
+    threadLock.acquire()
+    faceLocations = face_recognition.face_locations(rgb)
+    threadLock.release()
+
+    face_encodings = face_recognition.face_encodings(rgb, faceLocations)
+
+    # pedestrian detection
+    (rects, weights) = hog.detectMultiScale(rgb, winStride=(4, 4),
+                                            padding=(8, 8), scale=1.05)
+
+    rects = np.array([[x, y, x + w, y + h] for (x, y, w, h) in rects])
+
+    threadLock.acquire()
+    pick = non_max_suppression(rects, probs=None, overlapThresh=0.65)
+    threadLock.release()
+
+    name = 'UNKNOWN'
+    encoding_names = []
+    for encoding in face_encodings:
+        matches = face_recognition.compare_faces(knownFaceEncodings, encoding)
+        if True in matches:
+            # find the indexes of all matched faces then initialize a
+            # dictionary to count the total number of times each face
+            # was matched
+            matchedIdxs = [i for (i, b) in enumerate(matches) if b]
+            counts = {}
+
+            # loop over the matched indexes and maintain a count for
+            # each recognized face
+            for i in matchedIdxs:
+                name = knownPersons[i]
+                counts[name] = counts.get(name, 0) + 1
+
+            # determine the recognized face with the largest number
+            # of votes (note: in the event of an unlikely tie Python
+            # will select first entry in the dictionary)
+            name = max(counts, key=counts.get)
+            encoding_names.append(name)
+
+    threadLock.acquire()
+    names = encoding_names
+    threadLock.release()
+
 
 if __name__ == '__main__':
     faceCascade = cv2.CascadeClassifier('haarcascade_frontalface_alt2.xml')
 
     knownPersons = []
-    knownImages = []
     knownFaceEncodings = []
 
     for file in os.listdir('./profiles/'):
@@ -58,10 +114,14 @@ if __name__ == '__main__':
             continue
             
         try:
-            knownPersons.append(file.replace('.png', ''))
+            if file.endswith('.png'):
+                knownPersons.append(file.replace('.png', ''))
+            elif file.endswith('.jpg'):
+                knownPersons.append(file.replace('.jpg', ''))
+
             file = os.path.join('./profiles/', file)
-            knownImages = face_recognition.load_image_file(file)
-            knownFaceEncodings.append(face_recognition.face_encodings(knownImages)[0])
+            knownImage = face_recognition.load_image_file(file)
+            knownFaceEncodings.append(face_recognition.face_encodings(knownImage)[0])
         except Exception as e:
             # DEBUG
             raise e
@@ -70,60 +130,38 @@ if __name__ == '__main__':
     hog = cv2.HOGDescriptor()
     hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
-    # now read a test video with opencv and send the bytes directly
-    #vid = cv2.VideoCapture('test.mp4')
+    # now open the video capture device
     vid = cv2.VideoCapture(0)
     vid.set(cv2.CAP_PROP_CONVERT_RGB, 1.0)
 
     frame_width = int(vid.get(3))
     frame_height = int(vid.get(4))
-
     join(frame_width, frame_height)
 
-    names = []
+    threadLock = Lock()
     while vid.isOpened():
         try:
             ret, frame = vid.read()
             if not ret:
                 break
 
+            start_time = time.time()
+
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb = imutils.resize(frame, width=250)
             r = frame.shape[1] / float(rgb.shape[1])
 
-            faceLocations = face_recognition.face_locations(rgb)
-            faceEncodings = face_recognition.face_encodings(rgb, faceLocations)
+            # Create a worker thread that should do all heavy calculations
+            current_worker_thread = threading.Thread(target=worker, args=[threadLock, rgb, knownFaceEncodings, knownPersons])
+            threads.append(current_worker_thread)
+            current_worker_thread.start()
 
-            # pedestrian detection
-            (rects, weights) = hog.detectMultiScale(frame, winStride=(4, 4),
-                                                    padding=(8, 8), scale=1.05)
+            # wait a small amount to allow the worker thread a head start
+            time.sleep(0.0035)
 
-            rects = np.array([[x, y, x + w, y + h] for (x, y, w, h) in rects])
-            pick = non_max_suppression(rects, probs=None, overlapThresh=0.65)
-
-            name = 'UNKNOWN'
-            for encoding in faceEncodings:
-                matches = face_recognition.compare_faces(knownFaceEncodings, encoding)
-                if True in matches:
-                    # find the indexes of all matched faces then initialize a
-                    # dictionary to count the total number of times each face
-                    # was matched
-                    matchedIdxs = [i for (i, b) in enumerate(matches) if b]
-                    counts = {}
-
-                    # loop over the matched indexes and maintain a count for
-                    # each recognized face
-                    for i in matchedIdxs:
-                        name = knownPersons[i]
-                        counts[name] = counts.get(name, 0) + 1
-
-                    # determine the recognized face with the largest number
-                    # of votes (note: in the event of an unlikely tie Python
-                    # will select first entry in the dictionary)
-                    name = max(counts, key=counts.get)
-                    break
-
-            names.append(name)
+            print(f'Face locations: {faceLocations}')
+            print(f'Names: {names}')
+            print(f'Picks: {pick}')
 
             # loop over the recognized faces
             for ((top, right, bottom, left), name) in zip(faceLocations, names):
@@ -142,6 +180,11 @@ if __name__ == '__main__':
             for (xA, yA, xB, yB) in pick:
                 cv2.rectangle(frame, (xA, yA), (xB, yB), (0, 255, 0), 2)
 
+            end_time = time.time()
+            current_fps = math.ceil(1 / np.round(end_time - start_time, 3))
+            Logger.success(f'Current FPS: {current_fps}')
+
+            # Present the frame
             cv2.imshow('Frame', frame)
 
             # send the image to the server
@@ -158,9 +201,14 @@ if __name__ == '__main__':
     cv2.destroyAllWindows()
 
     # TODO: Send this in the leave process, by this will be decided whether or not to save the video.
-    anyFaceDetected = len(names) > 0
+    anythingDetected = len(names) > 0 or len(pick) > 0
+    Logger.success(f'Detected anything: {anythingDetected}')
 
     time.sleep(1)
     print('sending leave')
     send('leave')
+
+    for thread in threads:
+        thread.join()
+
     client.close()
