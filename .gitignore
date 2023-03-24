@@ -1,0 +1,8 @@
+.env
+venv/
+image.jpg
+.idea/
+flask_session/
+__pycache__/
+profiles/*
+!profiles/.gitkeep
