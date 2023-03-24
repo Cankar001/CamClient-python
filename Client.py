@@ -13,11 +13,13 @@ import pickle
 import struct
 
 import Logger
+import EnvironmentLoader
 
 usleep = lambda x: time.sleep(x/1000000.0)
 
-PORT = 45457
-IP = '127.0.0.1'
+envs = EnvironmentLoader.load()
+PORT = int(envs['SERVER_PORT'])
+IP = envs['SERVER_ADDRESS']
 ADDR = (IP, PORT)
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -25,28 +27,52 @@ client.connect(ADDR)
 
 
 def send(msg):
+    """
+    Sends a string to the server
+    :param msg: The string which should be sent.
+    :return:
+    """
     message = msg.encode('utf-8')
     client.send(message)
 
 
-def send_image_data(image):
+def send_image_data(frame):
+    """
+    Sends a single frame in binary to the server
+    :param image:
+    :return:
+    """
+
+    data = pickle.dumps(frame)
+    packed_frame = struct.pack("L", len(data)) + data
+
     usleep(10000)
     send('stream')
     usleep(10000)
-    client.send(image)
+    client.send(packed_frame)
     usleep(10000)
 
 
 def join(frame_width, frame_height):
     print('Sending join')
     send('join')
+    time.sleep(1)
     send('camera')
-
+    time.sleep(1)
+    send(f'{frame_width}x{frame_height}')
     time.sleep(1)
 
 
-def leave(motionDetected):
-    pass
+def leave(motion_detected):
+    print('sending leave')
+    send('leave')
+
+    if motion_detected:
+        send('motion_detected')
+    else:
+        send('motion_not_detected')
+
+    time.sleep(1)
 
 
 if __name__ == '__main__':
@@ -160,8 +186,7 @@ if __name__ == '__main__':
             cv2.imshow('Frame', frame)
 
             # send the image to the server
-            data = pickle.dumps(frame)
-            send_image_data(struct.pack("L", len(data)) + data)
+            send_image_data(frame)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
@@ -174,8 +199,10 @@ if __name__ == '__main__':
 
     # TODO: Send this in the leave process, by this will be decided whether or not to save the video.
     anyFaceDetected = len(names) > 0
-
-    time.sleep(1)
-    print('sending leave')
-    send('leave')
+    leave(anyFaceDetected)
     client.close()
+
+    # TODO: The camera should never fail, so add this reboot command at the end, if the program failed for some reason
+    #       this would work, because the script would be registered as a startup program and therefore be running
+    #       shortly again
+    #os.system('sudo shutdown -r now')
