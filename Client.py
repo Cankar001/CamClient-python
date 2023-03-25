@@ -55,9 +55,7 @@ def send_image_data(frame):
 
 def join(frame_width, frame_height):
     print('Sending join')
-    send('join')
-    time.sleep(1)
-    send('camera')
+    send('camera_join')
     time.sleep(1)
     send(f'{frame_width}x{frame_height}')
     time.sleep(1)
@@ -65,7 +63,7 @@ def join(frame_width, frame_height):
 
 def leave(motion_detected):
     print('sending leave')
-    send('leave')
+    send('camera_leave')
 
     if motion_detected:
         send('motion_detected')
