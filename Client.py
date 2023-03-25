@@ -1,7 +1,10 @@
 import math
+import multiprocessing.queues
 import queue
 import socket
 import time
+from operator import itemgetter
+
 import cv2
 
 import os
@@ -13,9 +16,12 @@ import numpy as np
 import pickle
 import struct
 
+from multiprocessing.managers import BaseManager
+from multiprocessing import Pool, Queue
+from queue import LifoQueue
+
 import Logger
 import EnvironmentLoader
-from multiprocessing import Pool, Queue
 
 usleep = lambda x: time.sleep(x/1000000.0)
 
@@ -86,7 +92,7 @@ def init_pool(db, rb):
     detection_buffer = db
     render_buffer = rb
 
-def detect_object(render_frame, image, knownFaceEncodings, knownPersons, aspect):
+def detect_object(render_frame, image, known_face_encodings, known_persons, frame_id):
     # initialize the HOG descriptor/person detector
     hog = cv2.HOGDescriptor()
     hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
@@ -95,27 +101,25 @@ def detect_object(render_frame, image, knownFaceEncodings, knownPersons, aspect)
     face_encodings = face_recognition.face_encodings(image, face_locations)
 
     # pedestrian detection
-    (rects, weights) = hog.detectMultiScale(render_frame, winStride=(4, 4),
-                                            padding=(8, 8), scale=1.05)
-
+    (rects, weights) = hog.detectMultiScale(render_frame, winStride=(4, 4), padding=(8, 8), scale=1.05)
     rects = np.array([[x, y, x + w, y + h] for (x, y, w, h) in rects])
     pick = non_max_suppression(rects, probs=None, overlapThresh=0.65)
 
     name = 'UNKNOWN'
     encoding_names = []
     for encoding in face_encodings:
-        matches = face_recognition.compare_faces(knownFaceEncodings, encoding)
+        matches = face_recognition.compare_faces(known_face_encodings, encoding)
         if True in matches:
             # find the indexes of all matched faces then initialize a
             # dictionary to count the total number of times each face
             # was matched
-            matchedIdxs = [i for (i, b) in enumerate(matches) if b]
+            matched_ids = [i for (i, b) in enumerate(matches) if b]
             counts = {}
 
             # loop over the matched indexes and maintain a count for
             # each recognized face
-            for i in matchedIdxs:
-                name = knownPersons[i]
+            for i in matched_ids:
+                name = known_persons[i]
                 counts[name] = counts.get(name, 0) + 1
 
             # determine the recognized face with the largest number
@@ -125,16 +129,18 @@ def detect_object(render_frame, image, knownFaceEncodings, knownPersons, aspect)
         encoding_names.append(name)
 
     result = {
-        'render_frame': render_frame,
+        'frame': render_frame,
         'names': encoding_names,
         'pick': pick,
-        'aspect': aspect,
-        'face_locations': face_locations
+        'face_locations': face_locations,
+        'frame_id': frame_id,
+        'detected': len(pick) > 0 or len(encoding_names) > 0
     }
 
-    Logger.success('Worker task was successful')
+    #Logger.success(f'Worker task was successful for frame {frame_id}')
     detection_buffer.put(result)
 
+"""
 def show():
     while True:
         data = detection_buffer.get()
@@ -180,7 +186,11 @@ def show():
         Logger.success('Frame successfully post-processed')
         detection_buffer.task_done()
         render_buffer.put(result)
+"""
 
+class MyManager(BaseManager):
+    pass
+MyManager.register('LifoQueue', LifoQueue)
 
 if __name__ == '__main__':
     faceCascade = cv2.CascadeClassifier('haarcascade_frontalface_alt2.xml')
@@ -221,67 +231,93 @@ if __name__ == '__main__':
     join(client, frame_width, frame_height)
 
     # Create a worker thread that should do all heavy calculations
-    detection_buffer = Queue()
+    manager = MyManager()
+    manager.start()
+
+    detection_buffer = manager.LifoQueue()
     render_buffer = Queue()
 
-    # 6 workers: 1 for the show task and 5 to process frames:
-    pool = Pool(6, initializer=init_pool, initargs=(detection_buffer, render_buffer))
-    # run the "show" task:
-    show_process = pool.apply_async(show, args=())
+    # 8 workers:
+    pool = Pool(8, initializer=init_pool, initargs=(detection_buffer, render_buffer))
 
     frame_workers = []
     anything_detected = False
-    last_frame_for_server = None
+    frame_counter = 0
+
+    worked_frames = []
     while vid.isOpened():
         try:
             success, frame = vid.read()
             if not success:
+                pool.close()
                 break
 
-            anything_detected = False
+            start_time = time.time()
+
             rgb = imutils.resize(frame, width=250)
             aspect_ratio = frame.shape[1] / float(rgb.shape[1])
 
-            f = pool.apply_async(detect_object, args=[frame, rgb, knownFaceEncodings, knownPersons, aspect_ratio])
+            f = pool.apply_async(detect_object, args=[frame, rgb, knownFaceEncodings, knownPersons, frame_counter])
             frame_workers.append(f)
 
+            # if the worker got some results finished, we render the boxes over the frame.
             try:
-                render_data = render_buffer.get(block=False)
-                anything_detected = render_data['detected']
-                frame_for_server = render_data['frame']
-                last_frame_for_server = frame_for_server
-
-                # send the image to the server
-                send_image_data(client, frame_for_server)
-
-                render_buffer.task_done()
+                current_frame_data = detection_buffer.get_nowait()
+                current_frame_id = current_frame_data['frame_id']
+                anything_detected = current_frame_data['detected']
+                worked_frames.append(current_frame_data)
             except queue.Empty:
-                anything_detected = False
-                if last_frame_for_server is not None:
-                    send_image_data(client, last_frame_for_server)
+                pass
+
+            # find the max index
+            if len(worked_frames) > 0:
+                sorted_list = sorted(worked_frames, key=itemgetter('frame_id'))
+                current_frame_data = sorted_list[len(sorted_list) - 1]
+
+                # loop over the recognized faces
+                for ((top, right, bottom, left), name) in zip(current_frame_data['face_locations'], current_frame_data['names']):
+                    # rescale the face coordinates
+                    top = int(top * aspect_ratio)
+                    right = int(right * aspect_ratio)
+                    bottom = int(bottom * aspect_ratio)
+                    left = int(left * aspect_ratio)
+
+                    # draw the predicted face name on the image
+                    cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+                    y = top - 15 if top - 15 > 15 else top + 15
+                    cv2.putText(frame, name, (left, y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
+
+                # draw the final bounding boxes
+                for (xA, yA, xB, yB) in current_frame_data['pick']:
+                    cv2.rectangle(frame, (xA, yA), (xB, yB), (0, 255, 0), 2)
+
+            end_time = time.time()
+            current_fps = math.ceil(1 / np.round(end_time - start_time, 3))
+           # Logger.success(f'FPS: {current_fps}')
 
             # Present the frame
             cv2.imshow('Frame', frame)
 
+            frame_counter += 1
+
+            # send to server
+        #    pickled_frame = pickle.dumps(frame)
+        #    packed_frame = struct.pack("L", len(pickled_frame)) + pickled_frame
+        #    client.sendall(packed_frame)
+
             if cv2.waitKey(1) & 0xFF == ord("q"):
+                pool.close()
                 break
 
         except KeyboardInterrupt as e:
+            pool.close()
             break
 
     vid.release()
     cv2.destroyAllWindows()
 
-    # wait for all the frame-putting tasks to complete:
-    for f in frame_workers:
-        f.get()
-
-    # signal the "show" task to end by placing None in the queue
-    detection_buffer.put(None)
-    show_process.get()
-
     Logger.success(f'Detected anything: {anything_detected}')
-    leave(client, True)
+    leave(client, anything_detected)
 
     client.close()
 
