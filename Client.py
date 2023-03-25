@@ -19,62 +19,69 @@ import EnvironmentLoader
 
 usleep = lambda x: time.sleep(x/1000000.0)
 
-envs = EnvironmentLoader.load()
-PORT = int(envs['SERVER_PORT'])
-IP = envs['SERVER_ADDRESS']
-ADDR = (IP, PORT)
-
-client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect(ADDR)
-
 threads = []
 names = []
 pick = []
 faceLocations = []
 
-def send(msg):
+def send(c: socket.socket, msg: str):
     """
     Sends a string to the server
+    :param c: The client connection handle.
     :param msg: The string which should be sent.
     :return:
     """
     message = msg.encode('utf-8')
-    client.send(message)
+    c.send(message)
 
 
-def send_image_data(frame):
+def send_image_data(c: socket.socket, image):
     """
     Sends a single frame in binary to the server
-    :param image:
+    :param c: The client connection handle.
+    :param image: The frame to send.
     :return:
     """
 
-    data = pickle.dumps(frame)
+    data = pickle.dumps(image)
     packed_frame = struct.pack("L", len(data)) + data
 
     usleep(10000)
-    send('stream')
+    send(c, 'stream')
     usleep(10000)
-    client.send(packed_frame)
+    c.sendall(packed_frame)
     usleep(10000)
 
 
-def join(frame_width, frame_height):
-    print('Sending join')
-    send('camera_join')
+def join(c: socket.socket, width: int, height: int):
+    """
+    Sends a join request to the server, as well as the width and the height of the connected camera.
+    :param c: The client connection handle.
+    :param width: The width of the opened camera stream.
+    :param height: The height of the opened camera stream.
+    :return:
+    """
+    Logger.info('Sending join')
+    send(c, 'camera_join')
     time.sleep(1)
-    send(f'{frame_width}x{frame_height}')
+    send(c, f'{width}x{height}')
     time.sleep(1)
 
 
-def leave(motion_detected):
-    print('sending leave')
-    send('camera_leave')
+def leave(c, motion_detected):
+    """
+    Sends a leave request to the server, as well as the information whether humans were detected during runtime.
+    :param c: The client connection handle.
+    :param motion_detected: A flag, indicating if any motion was found during runtime.
+    :return:
+    """
+    Logger.info('sending leave')
+    send(c, 'camera_leave')
 
     if motion_detected:
-        send('motion_detected')
+        send(c, 'motion_detected')
     else:
-        send('motion_not_detected')
+        send(c, 'motion_not_detected')
 
     time.sleep(1)
 
@@ -130,6 +137,13 @@ def worker(threadLock, rgb, knownFaceEncodings, knownPersons):
 if __name__ == '__main__':
     faceCascade = cv2.CascadeClassifier('haarcascade_frontalface_alt2.xml')
 
+    envs = EnvironmentLoader.load()
+    port = int(envs['SERVER_PORT'])
+    ip = envs['SERVER_ADDRESS']
+
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client.connect((ip, port))
+
     knownPersons = []
     knownFaceEncodings = []
 
@@ -160,7 +174,7 @@ if __name__ == '__main__':
 
     frame_width = int(vid.get(3))
     frame_height = int(vid.get(4))
-    join(frame_width, frame_height)
+    join(client, frame_width, frame_height)
 
     threadLock = Lock()
     while vid.isOpened():
@@ -212,7 +226,7 @@ if __name__ == '__main__':
             cv2.imshow('Frame', frame)
 
             # send the image to the server
-            send_image_data(frame)
+            send_image_data(client, frame)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
@@ -225,7 +239,7 @@ if __name__ == '__main__':
 
     anythingDetected = len(names) > 0 or len(pick) > 0
     Logger.success(f'Detected anything: {anythingDetected}')
-    leave(anythingDetected)
+    leave(client, anythingDetected)
 
     for thread in threads:
         thread.join()
