@@ -1,13 +1,11 @@
 import math
+import queue
 import socket
+import threading
 import time
 import cv2
 
-import os
-import face_recognition
 import mediapipe as mp
-import imutils
-from imutils.object_detection import non_max_suppression
 import numpy as np
 
 import pickle
@@ -20,26 +18,19 @@ usleep = lambda x: time.sleep(x/1000000.0)
 mp_face_detection = mp.solutions.face_detection
 mp_drawing = mp.solutions.drawing_utils
 
-envs = EnvironmentLoader.load()
-PORT = int(envs['SERVER_PORT'])
-IP = envs['SERVER_ADDRESS']
-ADDR = (IP, PORT)
+connected = False
 
-client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect(ADDR)
-
-
-def send(msg):
+def send(c, msg):
     """
     Sends a string to the server
     :param msg: The string which should be sent.
     :return:
     """
     message = msg.encode('utf-8')
-    client.send(message)
+    c.send(message)
 
 
-def send_image_data(frame):
+def send_image_data(c, frame):
     """
     Sends a single frame in binary to the server
     :param image:
@@ -50,73 +41,86 @@ def send_image_data(frame):
     packed_frame = struct.pack("L", len(data)) + data
 
     usleep(10000)
-    send('stream')
+    send(c, 'stream')
     usleep(10000)
-    client.send(packed_frame)
+    c.send(packed_frame)
     usleep(10000)
 
 
-def join(frame_width, frame_height):
+def join(c, frame_width, frame_height):
     print('Sending join')
-    send('camera_join')
+    send(c, 'camera_join')
     time.sleep(1)
-    send(f'{frame_width}x{frame_height}')
+    send(c, f'{frame_width}x{frame_height}')
     time.sleep(1)
 
 
-def leave(motion_detected):
+def leave(c, motion_detected):
     print('sending leave')
-    send('camera_leave')
+    send(c, 'camera_leave')
 
     if motion_detected:
-        send('motion_detected')
+        send(c, 'motion_detected')
     else:
-        send('motion_not_detected')
+        send(c, 'motion_not_detected')
 
     time.sleep(1)
 
+def send_to_server(lock: threading.Lock, width, height):
+    global sync_queue
+    global connected
+
+    envs = EnvironmentLoader.load()
+    ip = envs['SERVER_ADDRESS']
+    port = int(envs['SERVER_PORT'])
+
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client.connect((ip, port))
+
+    fcount = 0
+
+    lock.acquire()
+    connected = True
+    lock.release()
+
+    join(client, width, height)
+
+    while connected:
+        current_frame = sync_queue.get()
+        data = pickle.dumps(current_frame)
+        packed_frame = struct.pack("L", len(data)) + data
+
+        print(f'Sending stream... {fcount}')
+        usleep(10000)
+        send(client, 'stream')
+
+        usleep(10000)
+        client.sendall(packed_frame)
+        sync_queue.task_done()
+        fcount += 1
+
+    leave(client, True)
+    client.close()
 
 if __name__ == '__main__':
-    faceCascade = cv2.CascadeClassifier('haarcascade_frontalface_alt2.xml')
-
-    knownPersons = []
-    knownImages = []
-    knownFaceEncodings = []
-
-    for file in os.listdir('./profiles/'):
-        if file == '.gitkeep':
-            continue
-            
-        try:
-            knownPersons.append(file.replace('.png', ''))
-            file = os.path.join('./profiles/', file)
-            knownImages = face_recognition.load_image_file(file)
-            knownFaceEncodings.append(face_recognition.face_encodings(knownImages)[0])
-        except Exception as e:
-            # DEBUG
-            raise e
-
-    # initialize the HOG descriptor/person detector
-    hog = cv2.HOGDescriptor()
-    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-
-    # now read a test video with opencv and send the bytes directly
-    #vid = cv2.VideoCapture('test.mp4')
     vid = cv2.VideoCapture(0)
     vid.set(cv2.CAP_PROP_CONVERT_RGB, 1.0)
 
     frame_width = int(vid.get(3))
     frame_height = int(vid.get(4))
+    sync_lock = threading.Lock()
 
-    join(frame_width, frame_height)
+    sync_queue = queue.Queue()
+    sync_thread = threading.Thread(target=send_to_server, args=[sync_lock, frame_width, frame_height])
+    sync_thread.start()
 
-    names = []
-
+    any_face_detected = False
     with mp_face_detection.FaceDetection(min_detection_confidence=0.7) as face_detection:
         while vid.isOpened():
             try:
                 ret, frame = vid.read()
                 if not ret:
+                    connected = False
                     break
 
                 start_time = time.time()
@@ -129,31 +133,33 @@ if __name__ == '__main__':
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
                 if results.detections:
+                    any_face_detected = True
                     for detection in results.detections:
                         mp_drawing.draw_detection(frame, detection)
 
                 end_time = time.time()
                 current_fps = math.ceil(1 / np.round(end_time - start_time, 3))
-                Logger.success(f'Current FPS: {current_fps}')
+            #    Logger.success(f'Current FPS: {current_fps}')
 
+                # Present the frame
                 cv2.imshow('Frame', frame)
 
                 # send the image to the server
-                #send_image_data(frame)
+                sync_queue.put(frame)
 
                 if cv2.waitKey(1) & 0xFF == ord("q"):
+                    connected = False
                     break
 
             except KeyboardInterrupt as e:
+                connected = False
                 break
+
+    sync_queue.join()
+    sync_thread.join()
 
     vid.release()
     cv2.destroyAllWindows()
-
-    # TODO: Send this in the leave process, by this will be decided whether or not to save the video.
-    anyFaceDetected = len(names) > 0
-    leave(anyFaceDetected)
-    client.close()
 
     # TODO: The camera should never fail, so add this reboot command at the end, if the program failed for some reason
     #       this would work, because the script would be registered as a startup program and therefore be running
