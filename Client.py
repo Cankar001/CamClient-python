@@ -87,7 +87,8 @@ def client_worker(c: socket.socket, q: queue.Queue):
         packed_frame = struct.pack("L", len(data)) + data
 
         c.send(packed_frame)
-        usleep(10000)
+        q.task_done()
+        time.sleep(0.5)
 
 
 if __name__ == '__main__':
@@ -188,6 +189,7 @@ if __name__ == '__main__':
             except KeyboardInterrupt as e:
                 break
 
+    net_queue.join()
     APP_RUNNING = False
     vid.release()
     cv2.destroyAllWindows()
