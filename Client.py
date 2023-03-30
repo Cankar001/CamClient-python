@@ -6,8 +6,6 @@ import cv2
 import os
 import face_recognition
 import mediapipe as mp
-import imutils
-from imutils.object_detection import non_max_suppression
 import numpy as np
 
 import pickle
@@ -112,12 +110,26 @@ if __name__ == '__main__':
 
     names = []
 
+    detection_in_last_frame = False
+    detection_max_frames = 60 # if 60 frames are past without any detection, send cmd to save the video
+    detection_frame_counter = 0
+    detection_in_last_frames = False # set to True, when a recognition was detected over N frames
+    frame_counter = 0
+    undetected_frame_counter = 0
     with mp_face_detection.FaceDetection(min_detection_confidence=0.7) as face_detection:
         while vid.isOpened():
             try:
                 ret, frame = vid.read()
                 if not ret:
                     break
+
+                if detection_in_last_frames and undetected_frame_counter >= 180:
+                    # TODO send command to save the video
+                    #send('store_video')
+                    Logger.success('Sending request to save video...')
+                    detection_frame_counter = 0
+                    detection_in_last_frames = False
+                    undetected_frame_counter = 0
 
                 start_time = time.time()
 
@@ -129,18 +141,26 @@ if __name__ == '__main__':
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
                 if results.detections:
+                    if detection_frame_counter > 240:
+                        detection_in_last_frames = True
+                    detection_frame_counter += 1
+                    detection_in_last_frame = True
                     for detection in results.detections:
                         mp_drawing.draw_detection(frame, detection)
+                else:
+                    undetected_frame_counter += 1
+                    detection_in_last_frame = False
 
                 end_time = time.time()
                 current_fps = math.ceil(1 / np.round(end_time - start_time, 3))
-                Logger.success(f'Current FPS: {current_fps}')
+                #Logger.success(f'Current FPS: {current_fps}')
 
                 cv2.imshow('Frame', frame)
 
                 # send the image to the server
                 #send_image_data(frame)
 
+                frame_counter += 1
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
