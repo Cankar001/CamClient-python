@@ -1,5 +1,7 @@
 import math
+import queue
 import socket
+import threading
 import time
 import cv2
 
@@ -22,6 +24,7 @@ envs = EnvironmentLoader.load()
 PORT = int(envs['SERVER_PORT'])
 IP = envs['SERVER_ADDRESS']
 ADDR = (IP, PORT)
+APP_RUNNING = True
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect(ADDR)
@@ -73,6 +76,19 @@ def leave(motion_detected):
 
     time.sleep(1)
 
+def client_worker(c: socket.socket, q: queue.Queue):
+    global APP_RUNNING
+
+    while APP_RUNNING:
+        frame = q.get()
+        Logger.success('Got frame...')
+
+        data = pickle.dumps(frame)
+        packed_frame = struct.pack("L", len(data)) + data
+
+        c.send(packed_frame)
+        usleep(10000)
+
 
 if __name__ == '__main__':
     faceCascade = cv2.CascadeClassifier('haarcascade_frontalface_alt2.xml')
@@ -109,6 +125,10 @@ if __name__ == '__main__':
     join(frame_width, frame_height)
 
     names = []
+
+    net_queue = queue.Queue()
+    net_thread = threading.Thread(target=client_worker, args=(client, net_queue))
+    net_thread.start()
 
     detection_in_last_frame = False
     detection_max_frames = 60 # if 60 frames are past without any detection, send cmd to save the video
@@ -158,6 +178,7 @@ if __name__ == '__main__':
                 cv2.imshow('Frame', frame)
 
                 # send the image to the server
+                net_queue.put(frame)
                 #send_image_data(frame)
 
                 frame_counter += 1
@@ -167,8 +188,11 @@ if __name__ == '__main__':
             except KeyboardInterrupt as e:
                 break
 
+    APP_RUNNING = False
     vid.release()
     cv2.destroyAllWindows()
+
+    net_thread.join()
 
     # TODO: Send this in the leave process, by this will be decided whether or not to save the video.
     anyFaceDetected = len(names) > 0
