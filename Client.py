@@ -25,6 +25,8 @@ PORT = int(envs['SERVER_PORT'])
 IP = envs['SERVER_ADDRESS']
 ADDR = (IP, PORT)
 APP_RUNNING = True
+SEND_SAVE_REQUEST = False
+SEND_SAVE_FRAME = -1
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect(ADDR)
@@ -78,15 +80,30 @@ def leave(motion_detected):
 
 def client_worker(c: socket.socket, q: queue.Queue):
     global APP_RUNNING
+    global SEND_SAVE_REQUEST
+    global SEND_SAVE_FRAME
 
+    sent_frame_number = 0
     while APP_RUNNING:
         frame = q.get()
-        Logger.success('Got frame...')
+        Logger.success(f'Got frame {sent_frame_number}...')
+
+        if SEND_SAVE_REQUEST and sent_frame_number == (SEND_SAVE_FRAME + 1):
+            Logger.info('sending save request.')
+            SEND_SAVE_REQUEST = False
+            message = 'store_video'.encode('utf-8')
+            c.send(message)
+            time.sleep(1)
 
         data = pickle.dumps(frame)
         packed_frame = struct.pack("L", len(data)) + data
 
-        c.send(packed_frame)
+        try:
+            c.sendall(packed_frame)
+        except ConnectionResetError:
+            break
+
+        sent_frame_number += 1
         q.task_done()
         time.sleep(0.5)
 
@@ -146,8 +163,9 @@ if __name__ == '__main__':
 
                 if detection_in_last_frames and undetected_frame_counter >= 180:
                     # TODO send command to save the video
-                    #send('store_video')
-                    Logger.success('Sending request to save video...')
+                    SEND_SAVE_REQUEST = True
+                    SEND_SAVE_FRAME = frame_counter
+                    Logger.success(f'Sending request to save video at frame {frame_counter}')
                     detection_frame_counter = 0
                     detection_in_last_frames = False
                     undetected_frame_counter = 0
@@ -163,6 +181,7 @@ if __name__ == '__main__':
 
                 if results.detections:
                     if detection_frame_counter > 240:
+                        Logger.info('Set detection_in_last_frames to True.')
                         detection_in_last_frames = True
                     detection_frame_counter += 1
                     detection_in_last_frame = True
@@ -189,8 +208,10 @@ if __name__ == '__main__':
             except KeyboardInterrupt as e:
                 break
 
-    net_queue.join()
+    # TODO: uncomment this, if the client should first send all remaining frames before shutting down.
+    #net_queue.join()
     APP_RUNNING = False
+
     vid.release()
     cv2.destroyAllWindows()
 
