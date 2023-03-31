@@ -1,12 +1,13 @@
 import math
+import queue
 import socket
+import threading
 import time
 import cv2
 
 import os
 import face_recognition
-import imutils
-from imutils.object_detection import non_max_suppression
+import mediapipe as mp
 import numpy as np
 
 import pickle
@@ -16,11 +17,16 @@ import Logger
 import EnvironmentLoader
 
 usleep = lambda x: time.sleep(x/1000000.0)
+mp_face_detection = mp.solutions.face_detection
+mp_drawing = mp.solutions.drawing_utils
 
 envs = EnvironmentLoader.load()
 PORT = int(envs['SERVER_PORT'])
 IP = envs['SERVER_ADDRESS']
 ADDR = (IP, PORT)
+APP_RUNNING = True
+SEND_SAVE_REQUEST = False
+SEND_SAVE_FRAME = -1
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect(ADDR)
@@ -72,6 +78,35 @@ def leave(motion_detected):
 
     time.sleep(1)
 
+def client_worker(c: socket.socket, q: queue.Queue):
+    global APP_RUNNING
+    global SEND_SAVE_REQUEST
+    global SEND_SAVE_FRAME
+
+    sent_frame_number = 0
+    while APP_RUNNING:
+        frame = q.get()
+        Logger.success(f'Got frame {sent_frame_number}...')
+
+        if SEND_SAVE_REQUEST and sent_frame_number == (SEND_SAVE_FRAME + 1):
+            Logger.info('sending save request.')
+            SEND_SAVE_REQUEST = False
+            message = 'store_video'.encode('utf-8')
+            c.send(message)
+            time.sleep(1)
+
+        data = pickle.dumps(frame)
+        packed_frame = struct.pack("L", len(data)) + data
+
+        try:
+            c.sendall(packed_frame)
+        except ConnectionResetError:
+            break
+
+        sent_frame_number += 1
+        q.task_done()
+        time.sleep(0.5)
+
 
 if __name__ == '__main__':
     faceCascade = cv2.CascadeClassifier('haarcascade_frontalface_alt2.xml')
@@ -108,92 +143,79 @@ if __name__ == '__main__':
     join(frame_width, frame_height)
 
     names = []
-    while vid.isOpened():
-        try:
-            ret, frame = vid.read()
-            if not ret:
+
+    net_queue = queue.Queue()
+    net_thread = threading.Thread(target=client_worker, args=(client, net_queue))
+    net_thread.start()
+
+    detection_in_last_frame = False
+    detection_max_frames = 60 # if 60 frames are past without any detection, send cmd to save the video
+    detection_frame_counter = 0
+    detection_in_last_frames = False # set to True, when a recognition was detected over N frames
+    frame_counter = 0
+    undetected_frame_counter = 0
+    with mp_face_detection.FaceDetection(min_detection_confidence=0.7) as face_detection:
+        while vid.isOpened():
+            try:
+                ret, frame = vid.read()
+                if not ret:
+                    break
+
+                if detection_in_last_frames and undetected_frame_counter >= 180:
+                    # TODO send command to save the video
+                    SEND_SAVE_REQUEST = True
+                    SEND_SAVE_FRAME = frame_counter
+                    Logger.success(f'Sending request to save video at frame {frame_counter}')
+                    detection_frame_counter = 0
+                    detection_in_last_frames = False
+                    undetected_frame_counter = 0
+
+                start_time = time.time()
+
+                frame.flags.writeable = False
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = face_detection.process(frame)
+
+                frame.flags.writeable = True
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+                if results.detections:
+                    if detection_frame_counter > 240:
+                        Logger.info('Set detection_in_last_frames to True.')
+                        detection_in_last_frames = True
+                    detection_frame_counter += 1
+                    detection_in_last_frame = True
+                    for detection in results.detections:
+                        mp_drawing.draw_detection(frame, detection)
+                else:
+                    undetected_frame_counter += 1
+                    detection_in_last_frame = False
+
+                end_time = time.time()
+                current_fps = math.ceil(1 / np.round(end_time - start_time, 3))
+                #Logger.success(f'Current FPS: {current_fps}')
+
+                cv2.imshow('Frame', frame)
+
+                # send the image to the server
+                net_queue.put(frame)
+                #send_image_data(frame)
+
+                frame_counter += 1
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
+            except KeyboardInterrupt as e:
                 break
 
-            start_time = time.time()
-
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            rgb = imutils.resize(frame, width=250)
-            r = frame.shape[1] / float(rgb.shape[1])
-
-            faceLocations = face_recognition.face_locations(rgb)
-            faceEncodings = face_recognition.face_encodings(rgb, faceLocations)
-
-            # pedestrian detection
-            (rects, weights) = hog.detectMultiScale(frame, winStride=(4, 4),
-                                                    padding=(8, 8), scale=1.05)
-
-            rects = np.array([[x, y, x + w, y + h] for (x, y, w, h) in rects])
-            pick = non_max_suppression(rects, probs=None, overlapThresh=0.65)
-
-            name = 'UNKNOWN'
-            name_encodings = []
-            for encoding in faceEncodings:
-                matches = face_recognition.compare_faces(knownFaceEncodings, encoding)
-                if True in matches:
-                    # find the indexes of all matched faces then initialize a
-                    # dictionary to count the total number of times each face
-                    # was matched
-                    matchedIdxs = [i for (i, b) in enumerate(matches) if b]
-                    counts = {}
-
-                    # loop over the matched indexes and maintain a count for
-                    # each recognized face
-                    for i in matchedIdxs:
-                        name = knownPersons[i]
-                        counts[name] = counts.get(name, 0) + 1
-
-                    # determine the recognized face with the largest number
-                    # of votes (note: in the event of an unlikely tie Python
-                    # will select first entry in the dictionary)
-                    name = max(counts, key=counts.get)
-                    name_encodings.append(name)
-
-            # overwrite the current names list, because we are only interested in the names of the current frame
-            names = name_encodings
-
-            print(f'Face locations: {faceLocations}')
-            print(f'Names: {names}')
-            print(f'Picks: {pick}')
-
-            # loop over the recognized faces
-            for ((top, right, bottom, left), name) in zip(faceLocations, names):
-                # rescale the face coordinates
-                top = int(top * r)
-                right = int(right * r)
-                bottom = int(bottom * r)
-                left = int(left * r)
-
-                # draw the predicted face name on the image
-                cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-                y = top - 15 if top - 15 > 15 else top + 15
-                cv2.putText(frame, name, (left, y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
-
-            # draw the final bounding boxes
-            for (xA, yA, xB, yB) in pick:
-                cv2.rectangle(frame, (xA, yA), (xB, yB), (0, 255, 0), 2)
-
-            end_time = time.time()
-            current_fps = math.ceil(1 / np.round(end_time - start_time, 3))
-            Logger.success(f'Current FPS: {current_fps}')
-
-            cv2.imshow('Frame', frame)
-
-            # send the image to the server
-            send_image_data(frame)
-
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-
-        except KeyboardInterrupt as e:
-            break
+    # TODO: uncomment this, if the client should first send all remaining frames before shutting down.
+    #net_queue.join()
+    APP_RUNNING = False
 
     vid.release()
     cv2.destroyAllWindows()
+
+    net_thread.join()
 
     # TODO: Send this in the leave process, by this will be decided whether or not to save the video.
     anyFaceDetected = len(names) > 0

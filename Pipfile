@@ -4,12 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
+mediapipe = "*"
 opencv-python = "*"
-colorama = "*"
-face-recognition = "*"
 imutils = "*"
+face-recognition = "*"
 
 [dev-packages]
 
 [requires]
-python_version = "3.11"
+python_version = "3.7"
