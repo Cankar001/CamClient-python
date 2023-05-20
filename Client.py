@@ -29,6 +29,8 @@ SEND_SAVE_REQUEST = False
 SEND_SAVE_FRAME = -1
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+client.settimeout(5)
+Logger.info(f'Attempting to connect to {ADDR}')
 client.connect(ADDR)
 
 
@@ -134,7 +136,7 @@ if __name__ == '__main__':
 
     # now read a test video with opencv and send the bytes directly
     #vid = cv2.VideoCapture('test.mp4')
-    vid = cv2.VideoCapture(0)
+    vid = cv2.VideoCapture('/dev/video11')
     vid.set(cv2.CAP_PROP_CONVERT_RGB, 1.0)
 
     frame_width = int(vid.get(3))
