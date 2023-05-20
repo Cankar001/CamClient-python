@@ -111,6 +111,7 @@ def client_worker(c: socket.socket, q: queue.Queue):
 
 
 if __name__ == '__main__':
+    """
     faceCascade = cv2.CascadeClassifier('haarcascade_frontalface_alt2.xml')
 
     knownPersons = []
@@ -133,6 +134,7 @@ if __name__ == '__main__':
     # initialize the HOG descriptor/person detector
     hog = cv2.HOGDescriptor()
     hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+    """
 
     # now read a test video with opencv and send the bytes directly
     #vid = cv2.VideoCapture('test.mp4')
@@ -197,6 +199,8 @@ if __name__ == '__main__':
                 current_fps = math.ceil(1 / np.round(end_time - start_time, 3))
                 #Logger.success(f'Current FPS: {current_fps}')
 
+                cv2.namedWindow('Frame', cv2.WND_PROP_FULLSCREEN)
+                cv2.setWindowProperty('Frame', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
                 cv2.imshow('Frame', frame)
 
                 # send the image to the server
@@ -227,4 +231,4 @@ if __name__ == '__main__':
     # TODO: The camera should never fail, so add this reboot command at the end, if the program failed for some reason
     #       this would work, because the script would be registered as a startup program and therefore be running
     #       shortly again
-    #os.system('sudo shutdown -r now')
+    os.system('sudo shutdown')
