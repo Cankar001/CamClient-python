@@ -1,4 +1,4 @@
-import subprocess
+import os
 import io
 
 class MonitorControl():
@@ -17,12 +17,12 @@ class MonitorControl():
 
     def awakeMonitor(self):
         if self.runningOnRaspberry():
-            subprocess.call(['vcgencmd', 'display_power', 1])
+            os.system('vcgencmd display_power 1 >/dev/null')
             self.monitor_awake = True
 
     def shutdownMonitor(self):
         if self.runningOnRaspberry():
-            subprocess.call(['vcgencmd', 'display_power', 0])
+            os.system('vcgencmd display_power 0 >/dev/null')
             self.monitor_awake = False
 
     def isMonitorAwake(self) -> bool:

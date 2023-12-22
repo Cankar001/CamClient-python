@@ -30,7 +30,7 @@ SEND_SAVE_FRAME = -1
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.settimeout(5)
-Logger.info(f'Attempting to connect to {ADDR}')
+Logger.info(f'Trying to connect to {ADDR}')
 client.connect(ADDR)
 
 
@@ -152,6 +152,8 @@ if __name__ == '__main__':
     net_thread = threading.Thread(target=client_worker, args=(client, net_queue))
     net_thread.start()
 
+    cv2.startWindowThread()
+
     detection_in_last_frame = False
     detection_max_frames = 60 # if 60 frames are past without any detection, send cmd to save the video
     detection_frame_counter = 0
@@ -200,7 +202,7 @@ if __name__ == '__main__':
                 #Logger.success(f'Current FPS: {current_fps}')
 
                 cv2.namedWindow('Frame', cv2.WND_PROP_FULLSCREEN)
-                cv2.setWindowProperty('Frame', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                #cv2.setWindowProperty('Frame', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
                 cv2.imshow('Frame', frame)
 
                 # send the image to the server
