@@ -9,7 +9,7 @@ import imutils
 class Camera:
     def __init__(self, mirror=False, motion_detection_reference_frame_threshold=1000):
         self.data = None
-        self.cam = cv2.VideoCapture(0)
+        self.cam = cv2.VideoCapture(2)
 
         self.WIDTH = 640
         self.HEIGHT = 480
@@ -42,7 +42,7 @@ class Camera:
         self.cam.set(cv2.CAP_PROP_FRAME_HEIGHT, self.HEIGHT)
         time.sleep(2)
 
-    def get_location(self, x, y):
+    def set_location(self, x, y):
         self.center_x = x
         self.center_y = y
         self.touched_zoom = True
@@ -109,7 +109,7 @@ class Camera:
                         self.motion_detection_reshoot_reference_frame = True
 
                     for c in cnts:
-                        if cv2.contourArea(c) < 300:
+                        if cv2.contourArea(c) < 500:
                             continue
 
                         (x, y, w, h) = cv2.boundingRect(c)
@@ -257,34 +257,30 @@ class Camera:
                 cv2.setWindowProperty('Frame', cv2.WND_PROP_FULLSCREEN, cv2.WND_PROP_FULLSCREEN)
                 cv2.imshow('Frame', frame)
                 cv2.setMouseCallback('Frame', self.mouse_callback)
+            
             key = cv2.waitKey(1)
             if key == ord('q'):
                 # q : close
                 self.release()
                 cv2.destroyAllWindows()
                 break
-
             elif key == ord('z'):
                 # z : zoom - in
                 self.zoom_in()
-
             elif key == ord('x'):
                 # x : zoom - out
                 self.zoom_out()
-
             elif key == ord('p'):
                 # p : take picture and save image (image folder)
                 self.save_picture()
-
             elif key == ord('v'):
                 # v : zoom
                 self.touch_init()
-
             elif key == ord('r'):
-                # r : 동영상 촬영 시작 및 종료
+                # r : record video
                 self.recording = not self.recording
                 if self.recording:
-                    t = Thread(target=cam.record_video)
+                    t = Thread(target=self.record_video)
                     t.start()
 
     def release(self):
@@ -293,7 +289,7 @@ class Camera:
 
     def mouse_callback(self, event, x, y, flag, param):
         if event == cv2.EVENT_LBUTTONDBLCLK:
-            self.get_location(x, y)
+            self.set_location(x, y)
             self.zoom_in()
         elif event == cv2.EVENT_RBUTTONDOWN:
             self.zoom_out()
