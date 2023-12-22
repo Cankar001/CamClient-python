@@ -7,7 +7,7 @@ from queue import Queue
 import imutils
 
 class Camera:
-    def __init__(self, mirror=False):
+    def __init__(self, mirror=False, motion_detection_reference_frame_threshold=1000):
         self.data = None
         self.cam = cv2.VideoCapture(0)
 
@@ -28,6 +28,14 @@ class Camera:
 
         self.mirror = mirror
         self.first_frame = None
+        self.frame_counter = 0
+
+        # if the last X frames were recorded as motion_detected, 
+        # reset the reference image.
+        self.motion_detection_threshold_frame_counter = motion_detection_reference_frame_threshold
+        self.motion_detected_counter = 0
+        self.motion_detection_reshoot_reference_frame = False
+        self.motion_detection_reference_regenerated_counter = 0
 
     def __setup(self):
         self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.WIDTH)
@@ -39,14 +47,16 @@ class Camera:
         self.center_y = y
         self.touched_zoom = True
 
-    def detect_motion(self, np_image) -> bool:
-        frame = imutils.resize(np_image, width=500)
+    def detect_motion(self, np_image):
+        #frame = imutils.resize(np_image, width=500)
+        frame = np_image
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (21, 21), 0)
 
-        if self.first_frame is None:
+        if self.first_frame is None or self.motion_detection_reshoot_reference_frame:
             self.first_frame = gray
-            return False
+            self.motion_detection_reshoot_reference_frame = False
+            return None
         
         frame_delta = cv2.absdiff(self.first_frame, gray)
         threshold = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
@@ -54,15 +64,16 @@ class Camera:
         threshold = cv2.dilate(threshold, None, iterations=2)
         cnts = cv2.findContours(threshold.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = imutils.grab_contours(cnts)
+        return cnts
 
-        for c in cnts:
-            if cv2.contourArea(c) < 500:
-                continue
+    def drawTextOnImage(self, image, text, coords):
+        font = cv2.FONT_HERSHEY_COMPLEX
+        font_scale = 1
+        font_color = (255, 255, 255)
+        thickness = 2
+        line_type = 1
 
-            (x, y, w, h) = cv2.boundingRect(c)
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-        return True
+        cv2.putText(image, text, coords, font, font_scale, font_color, thickness, line_type)
 
     def stream(self):
         # streaming thread
@@ -81,13 +92,42 @@ class Camera:
                     if not self.scale == 1:
                         np_image = self.__zoom(np_image)
                 
-                if np_image is not None:
+                if np_image is not None:                   
+                    # Detect the motion
+                    cnts = self.detect_motion(np_image=np_image)
+                    if cnts is None:
+                        continue
+
+                    motion_detected = len(cnts) >= 10
+                    if motion_detected:
+                        self.motion_detected_counter += 1
+
+                    if self.motion_detected_counter >= self.motion_detection_threshold_frame_counter:
+                        print(f'The last {self.motion_detection_threshold_frame_counter} frames were recorded as motion detected, reshooting reference image...')
+                        self.motion_detected_counter = 0
+                        self.motion_detection_reference_regenerated_counter += 1
+                        self.motion_detection_reshoot_reference_frame = True
+
+                    for c in cnts:
+                        if cv2.contourArea(c) < 300:
+                            continue
+
+                        (x, y, w, h) = cv2.boundingRect(c)
+                        cv2.rectangle(np_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+                    # Draw stats
+                    self.drawTextOnImage(np_image, f'Motion detected: {motion_detected}', (100, 100))
+                    self.drawTextOnImage(np_image, f'Frame counter: {self.frame_counter}', (100, 150))
+                    self.drawTextOnImage(np_image, f'Motion detected frame counter: {self.motion_detected_counter} / {self.motion_detection_threshold_frame_counter}', (100, 200))
+                    self.drawTextOnImage(np_image, f'Reference image regenerated count: {self.motion_detection_reference_regenerated_counter}', (100, 250))
+
+                    # Draw frame
                     cv2.namedWindow('Frame', cv2.WND_PROP_FULLSCREEN)
                     cv2.setWindowProperty('Frame', cv2.WND_PROP_FULLSCREEN, cv2.WND_PROP_FULLSCREEN)
                     cv2.imshow('Frame', np_image)
                     cv2.setMouseCallback('Frame', self.mouse_callback)
-                    
-                    motion_detected = self.detect_motion(np_image=np_image)
+
+                    self.frame_counter += 1
 
                     key = cv2.waitKey(1)
                     if key == ord('q'):
