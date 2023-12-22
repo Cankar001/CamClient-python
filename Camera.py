@@ -4,7 +4,7 @@ import os
 import datetime
 from threading import Thread
 from queue import Queue
-
+import imutils
 
 class Camera:
     def __init__(self, mirror=False):
@@ -27,6 +27,7 @@ class Camera:
         self.recording = False
 
         self.mirror = mirror
+        self.first_frame = None
 
     def __setup(self):
         self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.WIDTH)
@@ -38,17 +39,40 @@ class Camera:
         self.center_y = y
         self.touched_zoom = True
 
+    def detect_motion(self, np_image) -> bool:
+        frame = imutils.resize(np_image, width=500)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (21, 21), 0)
+
+        if self.first_frame is None:
+            self.first_frame = gray
+            return False
+        
+        frame_delta = cv2.absdiff(self.first_frame, gray)
+        threshold = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
+
+        threshold = cv2.dilate(threshold, None, iterations=2)
+        cnts = cv2.findContours(threshold.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = imutils.grab_contours(cnts)
+
+        for c in cnts:
+            if cv2.contourArea(c) < 500:
+                continue
+
+            (x, y, w, h) = cv2.boundingRect(c)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+        return True
+
     def stream(self):
-        # streaming thread 함수
+        # streaming thread
         def streaming():
-            # 실제 thread 되는 함수
             self.ret = True
             while self.ret:
                 self.ret, np_image = self.cam.read()
                 if np_image is None:
                     continue
                 if self.mirror:
-                    # 거울 모드 시 좌우 반전
                     np_image = cv2.flip(np_image, 0)
                     np_image = cv2.flip(np_image, 1)
                 if self.touched_zoom:
@@ -57,14 +81,14 @@ class Camera:
                     if not self.scale == 1:
                         np_image = self.__zoom(np_image)
                 
-                #self.data = np_image
-                
                 if np_image is not None:
                     cv2.namedWindow('Frame', cv2.WND_PROP_FULLSCREEN)
                     cv2.setWindowProperty('Frame', cv2.WND_PROP_FULLSCREEN, cv2.WND_PROP_FULLSCREEN)
                     cv2.imshow('Frame', np_image)
                     cv2.setMouseCallback('Frame', self.mouse_callback)
                     
+                    motion_detected = self.detect_motion(np_image=np_image)
+
                     key = cv2.waitKey(1)
                     if key == ord('q'):
                         # q : close
@@ -81,19 +105,15 @@ class Camera:
         Thread(target=streaming).start()
 
     def __zoom(self, img, center=None):
-        # zoom하는 실제 함수
         height, width = img.shape[:2]
         if center is None:
-            #   중심값이 초기값일 때의 계산
             center_x = int(width / 2)
             center_y = int(height / 2)
             radius_x, radius_y = int(width / 2), int(height / 2)
         else:
-            #   특정 위치 지정시 계산
             rate = height / width
             center_x, center_y = center
 
-            #   비율 범위에 맞게 중심값 계산
             if center_x < width * (1-rate):
                 center_x = width * (1-rate)
             elif center_x > width * rate:
@@ -109,16 +129,14 @@ class Camera:
             radius_x = min(left_x, right_x)
             radius_y = min(up_y, down_y)
 
-        # 실제 zoom 코드
+        # zoom
         radius_x, radius_y = int(self.scale * radius_x), int(self.scale * radius_y)
 
-        # size 계산
+        # size
         min_x, max_x = center_x - radius_x, center_x + radius_x
         min_y, max_y = center_y - radius_y, center_y + radius_y
 
-        # size에 맞춰 이미지를 자른다
         cropped = img[min_y:max_y, min_x:max_x]
-        # 원래 사이즈로 늘려서 리턴
         new_cropped = cv2.resize(cropped, (width, height))
 
         return new_cropped
@@ -130,7 +148,7 @@ class Camera:
         self.scale = 1
 
     def zoom_out(self):
-        # scale 값을 조정하여 zoom-out
+        # scale zoom-out
         if self.scale < 1:
             self.scale += 0.1
         if self.scale == 1:
@@ -139,7 +157,7 @@ class Camera:
             self.touched_zoom = False
 
     def zoom_in(self):
-        # scale 값을 조정하여 zoom-in
+        # scale zoom-in
         if self.scale > 0.2:
             self.scale -= 0.1
 
@@ -152,7 +170,6 @@ class Camera:
             self.touch_init()
 
     def save_picture(self):
-        # 이미지 저장하는 함수
         ret, img = self.cam.read()
         if ret:
             now = datetime.datetime.now()
@@ -164,7 +181,6 @@ class Camera:
             self.image_queue.put_nowait(filename)
 
     def record_video(self):
-        # 동영상 녹화 함수
         fc = 20.0
         record_start_time = time.time()
         now = datetime.datetime.now()
@@ -221,7 +237,7 @@ class Camera:
                 self.save_picture()
 
             elif key == ord('v'):
-                # v : zoom 상태를 원상태로 복구
+                # v : zoom
                 self.touch_init()
 
             elif key == ord('r'):
