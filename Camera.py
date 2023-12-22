@@ -2,6 +2,7 @@ import cv2
 import time
 import os
 import datetime
+import math
 from threading import Thread
 from queue import Queue
 import imutils
@@ -43,7 +44,7 @@ class Camera:
         self.monitor_control = MonitorControl.MonitorControl()
         
         self.frames_since_no_motion = 0
-        self.frames_until_monitor_off = (int)(self.get_fps() * seconds_until_monitor_off) # one minute for now
+        self.seconds_until_monitor_off = seconds_until_monitor_off
 
     def __setup(self):
         self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.WIDTH)
@@ -97,10 +98,15 @@ class Camera:
         # streaming thread
         def streaming():
             self.ret = True
+            frames_until_monitor_off = 1024
+            fps = 60
             while self.ret:
                 self.ret, np_image = self.cam.read()
                 if np_image is None:
                     continue
+
+                start = time.time()
+
                 if self.mirror:
                     np_image = cv2.flip(np_image, 0)
                     np_image = cv2.flip(np_image, 1)
@@ -127,10 +133,10 @@ class Camera:
                     else:
                         self.frames_since_no_motion += 1
 
-                    if self.frames_since_no_motion >= self.frames_until_monitor_off:
+                    if self.frames_since_no_motion >= frames_until_monitor_off:
                         print('No motion detected, turning off monitor...')
                         self.monitor_control.shutdownMonitor()
-                        self.monitor_off_counter = 0
+                        self.frames_since_no_motion = 0
 
                     if self.motion_detected_counter >= self.motion_detection_threshold_frame_counter:
                         print(f'The last {self.motion_detection_threshold_frame_counter} frames were recorded as motion detected, reshooting reference image...')
@@ -151,10 +157,11 @@ class Camera:
 
                     # Draw stats
                     self.drawTextOnImage(np_image, f'Motion detected: {motion_detected}', (100, 100))
-                    self.drawTextOnImage(np_image, f'Frame counter: {self.frame_counter}', (100, 150))
-                    self.drawTextOnImage(np_image, f'Motion detected frame counter: {self.motion_detected_counter} / {self.motion_detection_threshold_frame_counter}', (100, 200))
-                    self.drawTextOnImage(np_image, f'Frames since no motion: {self.frames_since_no_motion} / {self.frames_until_monitor_off}', (100, 250))
-                    self.drawTextOnImage(np_image, f'Reference image regenerated count: {self.motion_detection_reference_regenerated_counter}', (100, 300))
+                    self.drawTextOnImage(np_image, f'FPS: {fps}', (100, 150))
+                    self.drawTextOnImage(np_image, f'Frame counter: {self.frame_counter}', (100, 200))
+                    self.drawTextOnImage(np_image, f'Motion detected frame counter: {self.motion_detected_counter} / {self.motion_detection_threshold_frame_counter}', (100, 250))
+                    self.drawTextOnImage(np_image, f'Frames since no motion: {self.frames_since_no_motion} / {frames_until_monitor_off}', (100, 300))
+                    self.drawTextOnImage(np_image, f'Reference image regenerated count: {self.motion_detection_reference_regenerated_counter}', (100, 350))
 
                     # Draw frame
                     cv2.namedWindow('Frame', cv2.WND_PROP_FULLSCREEN)
@@ -162,7 +169,12 @@ class Camera:
                     cv2.imshow('Frame', np_image)
                     cv2.setMouseCallback('Frame', self.mouse_callback)
 
+                    # Calculate current fps
                     self.frame_counter += 1
+                    end = time.time()
+                    frame_time = end - start
+                    fps =  math.ceil(1 / frame_time)
+                    frames_until_monitor_off = (int)(self.seconds_until_monitor_off * fps)
 
                     key = cv2.waitKey(1)
                     if key == ord('q'):
