@@ -9,7 +9,7 @@ import imutils
 import MonitorControl
 
 class Camera:
-    def __init__(self, mirror=False, motion_detection_reference_frame_threshold=1000, motion_detection_threshold=500):
+    def __init__(self, mirror=False, motion_detection_reference_frame_threshold=1000, motion_detection_threshold=500, seconds_until_monitor_off=20):
         self.data = None
         self.cam = cv2.VideoCapture(0)
 
@@ -41,7 +41,9 @@ class Camera:
         self.motion_detection_reference_regenerated_counter = 0
 
         self.monitor_control = MonitorControl.MonitorControl()
-        #self.monitor_control.shutdownMonitor()
+        
+        self.frames_since_no_motion = 0
+        self.frames_until_monitor_off = (int)(self.get_fps() * seconds_until_monitor_off) # one minute for now
 
     def __setup(self):
         self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.WIDTH)
@@ -52,6 +54,16 @@ class Camera:
         self.center_x = x
         self.center_y = y
         self.touched_zoom = True
+
+    def get_fps(self):
+        fps = -1
+        (major_ver, _, _) = (cv2.__version__).split('.')
+        if int(major_ver) < 3:
+            fps = self.cam.get(cv2.cv.CV_CAP_PROP_FPS)
+        else:
+            fps = self.cam.get(cv2.CAP_PROP_FPS)
+        return fps
+
 
     def detect_motion(self, np_image):
         #frame = imutils.resize(np_image, width=500)
@@ -107,10 +119,18 @@ class Camera:
 
                     motion_detected = len(cnts) >= 10
                     if motion_detected:
+                        self.frames_since_no_motion = 0
                         self.motion_detected_counter += 1
                         # We detected motion, so turn on the monitor again.
                         if not self.monitor_control.isMonitorAwake():
                             self.monitor_control.awakeMonitor()
+                    else:
+                        self.frames_since_no_motion += 1
+
+                    if self.frames_since_no_motion >= self.frames_until_monitor_off:
+                        print('No motion detected, turning off monitor...')
+                        self.monitor_control.shutdownMonitor()
+                        self.monitor_off_counter = 0
 
                     if self.motion_detected_counter >= self.motion_detection_threshold_frame_counter:
                         print(f'The last {self.motion_detection_threshold_frame_counter} frames were recorded as motion detected, reshooting reference image...')
@@ -133,7 +153,8 @@ class Camera:
                     self.drawTextOnImage(np_image, f'Motion detected: {motion_detected}', (100, 100))
                     self.drawTextOnImage(np_image, f'Frame counter: {self.frame_counter}', (100, 150))
                     self.drawTextOnImage(np_image, f'Motion detected frame counter: {self.motion_detected_counter} / {self.motion_detection_threshold_frame_counter}', (100, 200))
-                    self.drawTextOnImage(np_image, f'Reference image regenerated count: {self.motion_detection_reference_regenerated_counter}', (100, 250))
+                    self.drawTextOnImage(np_image, f'Frames since no motion: {self.frames_since_no_motion} / {self.frames_until_monitor_off}', (100, 250))
+                    self.drawTextOnImage(np_image, f'Reference image regenerated count: {self.motion_detection_reference_regenerated_counter}', (100, 300))
 
                     # Draw frame
                     cv2.namedWindow('Frame', cv2.WND_PROP_FULLSCREEN)
