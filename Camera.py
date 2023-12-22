@@ -6,10 +6,12 @@ from threading import Thread
 from queue import Queue
 import imutils
 
+import MonitorControl
+
 class Camera:
-    def __init__(self, mirror=False, motion_detection_reference_frame_threshold=1000):
+    def __init__(self, mirror=False, motion_detection_reference_frame_threshold=1000, motion_detection_threshold=500):
         self.data = None
-        self.cam = cv2.VideoCapture(2)
+        self.cam = cv2.VideoCapture(0)
 
         self.WIDTH = 640
         self.HEIGHT = 480
@@ -32,10 +34,14 @@ class Camera:
 
         # if the last X frames were recorded as motion_detected, 
         # reset the reference image.
+        self.motion_detection_threshold = motion_detection_threshold
         self.motion_detection_threshold_frame_counter = motion_detection_reference_frame_threshold
         self.motion_detected_counter = 0
         self.motion_detection_reshoot_reference_frame = False
         self.motion_detection_reference_regenerated_counter = 0
+
+        self.monitor_control = MonitorControl.MonitorControl()
+        #self.monitor_control.shutdownMonitor()
 
     def __setup(self):
         self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.WIDTH)
@@ -96,11 +102,15 @@ class Camera:
                     # Detect the motion
                     cnts = self.detect_motion(np_image=np_image)
                     if cnts is None:
+                        self.frame_counter += 1
                         continue
 
                     motion_detected = len(cnts) >= 10
                     if motion_detected:
                         self.motion_detected_counter += 1
+                        # We detected motion, so turn on the monitor again.
+                        if not self.monitor_control.isMonitorAwake():
+                            self.monitor_control.awakeMonitor()
 
                     if self.motion_detected_counter >= self.motion_detection_threshold_frame_counter:
                         print(f'The last {self.motion_detection_threshold_frame_counter} frames were recorded as motion detected, reshooting reference image...')
@@ -108,8 +118,12 @@ class Camera:
                         self.motion_detection_reference_regenerated_counter += 1
                         self.motion_detection_reshoot_reference_frame = True
 
+                        # As we don't have any motion anymore, we can turn off the display
+                        if self.monitor_control.isMonitorAwake():
+                            self.monitor_control.shutdownMonitor()
+
                     for c in cnts:
-                        if cv2.contourArea(c) < 500:
+                        if cv2.contourArea(c) < self.motion_detection_threshold:
                             continue
 
                         (x, y, w, h) = cv2.boundingRect(c)
