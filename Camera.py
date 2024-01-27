@@ -130,6 +130,7 @@ class Camera:
                         self.motion_detected_counter += 1
                         # We detected motion, so turn on the monitor again.
                         if not self.monitor_control.isMonitorAwake():
+                            print('Motion detected, turning on monitor...')
                             self.monitor_control.awakeMonitor()
                     else:
                         self.frames_since_no_motion += 1
