@@ -124,7 +124,7 @@ class Camera:
                         self.frame_counter += 1
                         continue
 
-                    motion_detected = len(cnts) >= 5
+                    motion_detected = len(cnts) >= 7
                     if motion_detected:
                         self.frames_since_no_motion = 0
                         self.motion_detected_counter += 1
