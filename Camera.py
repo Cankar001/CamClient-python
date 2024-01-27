@@ -10,7 +10,7 @@ import imutils
 import MonitorControl
 
 class Camera:
-    def __init__(self, mirror=False, motion_detection_reference_frame_threshold=1000, motion_detection_threshold=500, seconds_until_monitor_off=300, show_debug_text=False):
+    def __init__(self, mirror=False, motion_detection_reference_frame_threshold=1000, motion_detection_threshold=500, seconds_until_monitor_off=20, show_debug_text=False):
         self.data = None
         self.cam = cv2.VideoCapture(0)
         self.show_debug_text = show_debug_text
@@ -124,7 +124,7 @@ class Camera:
                         self.frame_counter += 1
                         continue
 
-                    motion_detected = len(cnts) >= 10
+                    motion_detected = len(cnts) >= 5
                     if motion_detected:
                         self.frames_since_no_motion = 0
                         self.motion_detected_counter += 1
