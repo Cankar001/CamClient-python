@@ -10,7 +10,7 @@ import imutils
 import MonitorControl
 
 class Camera:
-    def __init__(self, mirror=False, motion_detection_reference_frame_threshold=1000, motion_detection_threshold=500, seconds_until_monitor_off=20, show_debug_text=False):
+    def __init__(self, mirror=False, motion_detection_reference_frame_threshold=1000, motion_detection_threshold=500, seconds_until_monitor_off=180, show_debug_text=False):
         self.data = None
         self.cam = cv2.VideoCapture(0)
         self.show_debug_text = show_debug_text
@@ -88,9 +88,9 @@ class Camera:
 
     def drawTextOnImage(self, image, text, coords):
         font = cv2.FONT_HERSHEY_COMPLEX
-        font_scale = 1
-        font_color = (255, 255, 255)
-        thickness = 2
+        font_scale = 0.5
+        font_color = (0, 0, 255)
+        thickness = 1
         line_type = 1
 
         cv2.putText(image, text, coords, font, font_scale, font_color, thickness, line_type)
@@ -158,12 +158,12 @@ class Camera:
 
                     # Draw stats
                     if self.show_debug_text:
-                        self.drawTextOnImage(np_image, f'Motion detected: {motion_detected}', (0, 100))
-                        self.drawTextOnImage(np_image, f'FPS: {fps}', (0, 150))
-                        self.drawTextOnImage(np_image, f'Frame counter: {self.frame_counter}', (0, 200))
-                        self.drawTextOnImage(np_image, f'Motion detected frame counter: {self.motion_detected_counter} / {self.motion_detection_threshold_frame_counter}', (0, 250))
-                        self.drawTextOnImage(np_image, f'Frames since no motion: {self.frames_since_no_motion} / {frames_until_monitor_off}', (0, 300))
-                        self.drawTextOnImage(np_image, f'Reference image regenerated count: {self.motion_detection_reference_regenerated_counter}', (0, 350))
+                        self.drawTextOnImage(np_image, f'Motion detected: {motion_detected}', (0, 20))
+                        self.drawTextOnImage(np_image, f'FPS: {fps}', (0, 50))
+                        self.drawTextOnImage(np_image, f'Frame counter: {self.frame_counter}', (0, 80))
+                        self.drawTextOnImage(np_image, f'Motion detected frame counter: {self.motion_detected_counter} / {self.motion_detection_threshold_frame_counter}', (0, 110))
+                        self.drawTextOnImage(np_image, f'Frames since no motion: {self.frames_since_no_motion} / {frames_until_monitor_off}', (0, 140))
+                        self.drawTextOnImage(np_image, f'Reference image regenerated count: {self.motion_detection_reference_regenerated_counter}', (0, 170))
 
                     # Draw frame
                     cv2.namedWindow('Frame', cv2.WND_PROP_FULLSCREEN)

@@ -17,7 +17,7 @@ import Camera as c
 usleep = lambda x: time.sleep(x/1000000.0)
 
 if __name__ == '__main__':
-    cam = c.Camera(mirror=True)
+    cam = c.Camera(mirror=True, show_debug_text=True)
     cam.stream()
 
     # TODO: The camera should never fail, so add this reboot command at the end, if the program failed for some reason
