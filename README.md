@@ -1,28 +1,13 @@
 # CamClient
 
-This client opens a camera feed and does multiple 
-calculations with each current frame. 
-
-First, it does a pedestrian detection, 
-to ensure that moving humans get detected, 
-if they are not very close to the camera. 
-
-If a human gets near the camera, a face detection is 
-run as well, where the client compares each face 
-in the frame with pictures of humans, 
-uploaded to the `profiles` folder.
+This demo application detects, if someone is in a frame and turns off the connected monitor, if no one was detected for a configurable amount of time. It turns the monitor on again, if someone is detected.
 
 # Getting started
 
 ## Clone the repository
 ```shell
-git clone https://github.com/Cankar001/CamClient.git
+git clone https://github.com/Cankar001/CamClient-python
 ```
-
-## Create a environment file
-You need to copy the `.env.example` file and rename it to just `.env`.
-
-Fill in the server address and the port, you chose before when intializing the server.
 
 ## Create a virtual environment
 ```shell
@@ -52,7 +37,7 @@ pip install -r requirements.txt
 
 ## Run client
 ```shell
-pipenv run python Client.py
+pipenv run python Demo.py
 ```
 
 # Troubleshooting
