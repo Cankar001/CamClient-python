@@ -13,8 +13,8 @@ import numpy as np
 import pickle
 import struct
 
-import Logger
-import EnvironmentLoader
+import backup.Logger as Logger
+import backup.EnvironmentLoader as EnvironmentLoader
 
 usleep = lambda x: time.sleep(x/1000000.0)
 mp_face_detection = mp.solutions.face_detection

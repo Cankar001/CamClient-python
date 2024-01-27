@@ -1,6 +1,6 @@
 import os
 
-import Logger
+import backup.Logger as Logger
 
 def load():
     """
