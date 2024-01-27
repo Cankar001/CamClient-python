@@ -190,6 +190,10 @@ class Camera:
                     elif key == ord('x'):
                         # x : zoom - out
                         self.zoom_out()
+                    elif key & 0xFF != 0xFF:
+                        # any key was pressed, turn on monitor
+                        if not self.monitor_control.isMonitorAwake():
+                            self.monitor_control.awakeMonitor()
 
         Thread(target=streaming).start()
 
