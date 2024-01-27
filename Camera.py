@@ -146,8 +146,8 @@ class Camera:
                         self.motion_detection_reshoot_reference_frame = True
 
                         # As we don't have any motion anymore, we can turn off the display
-                        if self.monitor_control.isMonitorAwake():
-                            self.monitor_control.shutdownMonitor()
+                        #if self.monitor_control.isMonitorAwake():
+                        #    self.monitor_control.shutdownMonitor()
 
                     for c in cnts:
                         if cv2.contourArea(c) < self.motion_detection_threshold:
