@@ -150,12 +150,14 @@ class Camera:
                         #if self.monitor_control.isMonitorAwake():
                         #    self.monitor_control.shutdownMonitor()
 
-                    for c in cnts:
-                        if cv2.contourArea(c) < self.motion_detection_threshold:
-                            continue
+                    # Draw only rectangles, if motion was detected.
+                    if motion_detected:
+                        for c in cnts:
+                            if cv2.contourArea(c) < self.motion_detection_threshold:
+                                continue
 
-                        (x, y, w, h) = cv2.boundingRect(c)
-                        cv2.rectangle(np_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                            (x, y, w, h) = cv2.boundingRect(c)
+                            cv2.rectangle(np_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
                     # Draw stats
                     if self.show_debug_text:
