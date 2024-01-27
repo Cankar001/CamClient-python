@@ -192,6 +192,9 @@ class Camera:
                         self.zoom_out()
                     elif key & 0xFF != 0xFF:
                         # any key was pressed, turn on monitor
+                        # and reset the counters, so that the timeout can begin again
+                        self.motion_detected_counter = 0
+                        self.frames_since_no_motion = 0
                         if not self.monitor_control.isMonitorAwake():
                             self.monitor_control.awakeMonitor()
 
